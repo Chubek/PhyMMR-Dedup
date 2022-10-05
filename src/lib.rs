@@ -1,9 +1,20 @@
 #![allow(unused)]
 
+/// We use Levenshtein distance on 2-combination
+/// of all the sequences after running them through 
+/// n_trim().
+/// Then we filter the distances that are LOWER than
+/// the threshold and we KEEP them.
+/// After that we use fasthash to get their u64 hash
+/// and if they are equal, we keep them.
+/// We flatten the iterator first.
+/// Then we collect the string vector.
+/// Contact Chubak#7400 if you got any questions.
+
 #[macro_use]
 extern crate lazy_static;
 
-use fasthash::{metro, MetroHasher};
+use fasthash::metro;
 use itertools::Itertools;
 use levenshtein::levenshtein;
 use pyo3::prelude::*;
@@ -66,11 +77,9 @@ fn n_trim(parent_seq: String, min_seq_length: usize) -> Vec<String> {
 #[pyfunction]
 fn dedup_lines(lines: Vec<String>, min_seq_length: usize, leven_thresh: usize) -> Vec<String> {
     let mut header_counter = 1;
-    let mut lines_clone = lines.clone();
 
-    lines_clone.extend(lines.into_iter().map(|x| reverse_complement(x)));
 
-    lines_clone
+    lines
         .into_iter()
         .map(|x| {
             let trim = x.trim().to_string();
@@ -86,12 +95,26 @@ fn dedup_lines(lines: Vec<String>, min_seq_length: usize, leven_thresh: usize) -
                     .into_iter()
                     .map(|v| {
                         let (a, b) = (v.get(0).unwrap(), v.get(1).unwrap());
+                        
+                        let a_comp = reverse_complement(a.clone());
+                        let b_comp = reverse_complement(b.clone());
+                        
                         let leven = levenshtein(a, b);
+                        let leven_comp_a = levenshtein(&a_comp, b);
+                        let leven_comp_b = levenshtein(a, &b_comp);
 
-                        (leven, v)
+
+                        (leven, leven_comp_a, leven_comp_b, v)
                     })
-                    .filter(|(leven, v)| *leven <= leven_thresh)
-                    .map(|(_, v)| v)
+                    .filter(|(
+                        leven,
+                        leven_comp_a, 
+                        leven_comp_b,  
+                        _)| *leven <= leven_thresh 
+                            && *leven_comp_a <= leven_thresh 
+                            && *leven_comp_b <= leven_thresh
+                        )
+                    .map(|(_, _, _, v)| v)
                     .collect::<Vec<Vec<String>>>()
             };
 
