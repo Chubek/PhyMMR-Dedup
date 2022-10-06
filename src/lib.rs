@@ -39,7 +39,7 @@ struct SiftTrans {
     pub is_trans: bool,
 }
 
-fn sift_four_common(a: String, b: String, max_offset: isize, max_distance: Option<f32>) -> f32 {
+fn sift_four_common(a: &String, b: &String, max_offset: isize, max_distance: Option<f32>) -> f32 {
     if a.len() == 0 {
         if b.len() == 0 {
             return 0f32;
@@ -223,12 +223,50 @@ fn n_trim(parent_seq: String, min_seq_length: usize) -> Vec<String> {
 }
 
 #[pyfunction]
-fn dedup_lines(lines: Vec<String>, min_seq_length: usize, leven_thresh: usize) -> Vec<String> {
-    let mut header_counter = 1;
+fn dedup_lines(lines: Vec<String>, min_seq_length: usize, dist_thresh: f32) -> Vec<String> {
+    lines
+        .into_iter()
+        .map(|x| x.trim().to_string())
+        .filter(|x| x.chars().next() != Some('>'))
+        .combinations(2)
+        .map(|v| {
+            let (a, b) = (v.get(0).unwrap(), v.get(1).unwrap());
 
-    lines.into_iter().combinations(2);
+            let a_n_trim = n_trim(a.clone(), min_seq_length);
+            let b_n_trim = n_trim(b.clone(), min_seq_length);
 
-    vec![String::new()]
+            let mut ret = vec![];
+
+            for ant in a_n_trim.iter() {
+                for bnt in b_n_trim.iter() {
+                    let dist = sift_four_common(ant, bnt, 1, None);
+
+                    let comp_a = reverse_complement(ant.clone());
+                    let comp_b = reverse_complement(bnt.clone());
+
+                    let dist_comp = sift_four_common(&comp_a, &comp_b, 1, None);
+
+                    ret.push((a.clone(), b.clone(), dist, dist_comp));
+                }
+            }
+
+            ret
+        })
+        .flatten()
+        .filter(|(_, _, dist, dist_comp)| *dist < dist_thresh && *dist_comp < dist_thresh)
+        .map(|(a, b, _, _)| {
+            let a_clone = a.clone();
+            let b_clone = b.clone();
+
+            let a_hash = metro::hash64(a_clone);
+            let b_hash = metro::hash64(b_clone);
+
+            (a, b, a_hash, b_hash)
+        })
+        .filter(|(_, _, a_hash, b_hash)| *a_hash != *b_hash)
+        .map(|(a, b, _, _)| vec![a, b])
+        .flatten()
+        .collect::<Vec<String>>()
 }
 
 #[pymodule]
@@ -244,7 +282,7 @@ fn test_stif_four() {
     let max_offset = 1isize;
     let max_distance = None;
 
-    let dist = sift_four_common(a, b, max_offset, max_distance);
+    let dist = sift_four_common(&a, &b, max_offset, max_distance);
 
     assert_eq!(dist, 2f32);
 }
