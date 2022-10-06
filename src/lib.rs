@@ -222,8 +222,15 @@ fn n_trim(parent_seq: String, min_seq_length: usize) -> Vec<String> {
     }
 }
 
+fn add_header(seq: String, i: &mut usize) -> String {
+    *i += 1;
+    format!(">NODE_{}_length_{}\n{}\n", i, seq.len(), seq)
+}
+
 #[pyfunction]
 fn dedup_lines(lines: Vec<String>, min_seq_length: usize, dist_thresh: f32) -> Vec<String> {
+    let mut this_index = 0usize; //starts from zero but at first 1 is added
+    
     lines
         .into_iter()
         .map(|x| x.trim().to_string())
@@ -270,7 +277,10 @@ fn dedup_lines(lines: Vec<String>, min_seq_length: usize, dist_thresh: f32) -> V
         .filter(|(_, _, a_hash, b_hash, a_comp_hash, b_comp_hash)| *a_hash != *b_hash 
                                                                         && a_hash != a_comp_hash
                                                                         && b_hash != b_comp_hash)
-        .map(|(a, b, _, _, _, _)| vec![a, b])
+        .map(|(a, b, _, _, _, _)| vec![
+            add_header(a, &mut this_index), 
+            add_header(b, &mut this_index)
+            ])
         .flatten()
         .collect::<Vec<String>>()
 }
