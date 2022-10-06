@@ -246,25 +246,31 @@ fn dedup_lines(lines: Vec<String>, min_seq_length: usize, dist_thresh: f32) -> V
 
                     let dist_comp = sift_four_common(&comp_a, &comp_b, 1, None);
 
-                    ret.push((a.clone(), b.clone(), dist, dist_comp));
+                    ret.push((a.clone(), b.clone(), comp_a, comp_b,  dist, dist_comp));
                 }
             }
 
             ret
         })
         .flatten()
-        .filter(|(_, _, dist, dist_comp)| *dist < dist_thresh && *dist_comp < dist_thresh)
-        .map(|(a, b, _, _)| {
+        .filter(|(_, _, _, _, dist, dist_comp)| *dist < dist_thresh && *dist_comp < dist_thresh)
+        .map(|(a, b, a_comp, b_comp, _, _)| {
             let a_clone = a.clone();
             let b_clone = b.clone();
 
+
             let a_hash = metro::hash64(a_clone);
             let b_hash = metro::hash64(b_clone);
+            let a_comp_hash = metro::hash64(a_comp);
+            let b_comp_hash = metro::hash64(b_comp);
 
-            (a, b, a_hash, b_hash)
+
+            (a, b, a_hash, b_hash, a_comp_hash, b_comp_hash)
         })
-        .filter(|(_, _, a_hash, b_hash)| *a_hash != *b_hash)
-        .map(|(a, b, _, _)| vec![a, b])
+        .filter(|(_, _, a_hash, b_hash, a_comp_hash, b_comp_hash)| *a_hash != *b_hash 
+                                                                        && a_hash != a_comp_hash
+                                                                        && b_hash != b_comp_hash)
+        .map(|(a, b, _, _, _, _)| vec![a, b])
         .flatten()
         .collect::<Vec<String>>()
 }
