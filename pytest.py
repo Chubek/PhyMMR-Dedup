@@ -8,10 +8,10 @@ with open("test_file.fa", "r") as fr:
 
     len_lines = len(lines)
 
-    dedup_lines(lines, 90, 5)
+    dep = dedup_lines(lines, 90, 20)
 
 
 t2 = time()
 
 
-print(f"Deduped {len_lines} lines in {t2 - t1} secs")
+print(f"Deduped {len_lines} lines in {t2 - t1} secs. {len(dep) - len(lines)} lines removed.")
