@@ -16,20 +16,18 @@ extern crate lazy_static;
 
 use fasthash::metro;
 use pyo3::prelude::*;
-use std::{collections::HashMap, ops::DerefMut};
+use hashbrown::HashMap;
 use rayon::prelude::*;
 use std::sync::{Arc, Mutex};
+use std::ops::DerefMut;
+use bio::alphabets::rna::revcomp;
 
 lazy_static! {
-    static ref SEQS_HASH: Arc<Mutex<HashMap<u64, Vec<u8>>>> = {
-        let hashmap = HashMap::<u64, Vec<u8>>::new();
+    static ref SEQS_HASH: Arc<Mutex<HashMap<u64, String>>> = {
+        let hashmap = HashMap::<u64, String>::new();
 
         Arc::new(Mutex::new(hashmap))
     };
-
-    static ref RET_STR: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::<String>::new()));
-
-    static ref INDEX: Arc<Mutex<usize>> = Arc::new(Mutex::new(0usize));
 }
 
 
@@ -186,19 +184,13 @@ fn reverse_complement(line: &String) -> String {
 }
 */
 
-fn reverse_complement(line: &mut [u8]) {
-    line.reverse();
-
-    for i in 0..line.len() {
-        match line[i] {
-            65 => line[i] = 84,
-            84 => line[i] = 65,
-            67 => line[i] = 71,
-            71 => line[i] = 67,
-            _ => (),
-        }
-    }
+fn reverse_complement(line: &mut String) {
+    *line = line.replace("A", "T");
+    *line = line.replace("T", "A");
+    *line = line.replace("C", "G");
+    *line = line.replace("G", "C");    
 }
+
 
 fn n_trim(parent_seq: String, min_seq_length: usize) -> Vec<String> {
     if !parent_seq.chars().any(|x| x == 'N') {
@@ -243,52 +235,48 @@ fn add_header(seq: String, i: usize) -> String {
     format!(">NODE_{}_length_{}\n{}\n", i, seq.len(), seq)
 }
 
+
+
 #[pyfunction]
 fn dedup_lines(lines: Vec<String>, min_seq_length: usize, dist_thresh: f32) -> Vec<String> {
-    (0..lines.len())
-        .step_by(2)
-        .collect::<Vec<usize>>()
-        .par_iter()
-        .map(|x| 
-            lines[x + 1].trim().as_bytes().to_vec()
-        )
-        .for_each(|x| {
-            let mut ret = SEQS_HASH.lock().unwrap();
-            let mut ret_mut = ret.deref_mut();
+    let mut vec_ret: Vec<String> = vec![];
 
-            let a_hash = metro::hash64(&x);
-            ret_mut.insert(a_hash, x.clone());
+    lines
+        .into_par_iter()
+        .enumerate()
+        .filter(|(i, _)| i % 2 == 0)
+        .for_each(|(_, v)| {
+            let mut hmm = SEQS_HASH.lock().unwrap();
+            let mut hm = hmm.deref_mut();
 
-            let mut a_comp = x.clone();
-            reverse_complement(&mut a_comp);
-            let a_comp_hash = metro::hash64(&a_comp);
-            ret_mut.insert(a_comp_hash, a_comp);
+            let a_hash = metro::hash64(&v);
+            hm.insert(a_hash, v.clone());
 
+            let mut a_comp = v.clone().as_bytes().to_vec();
+            a_comp = revcomp(a_comp);
+            let a_comp_str = String::from_utf8(a_comp).unwrap();
+            let a_comp_hash = metro::hash64(&a_comp_str);
+            hm.insert(a_comp_hash, a_comp_str);
         });
+    
+    
+    let ret = SEQS_HASH.lock().unwrap().clone();
+   
+    ret
+        .into_iter()
+        .enumerate()
+        .for_each(|(_, (i, v))| {
+            vec_ret.push(add_header(
+                v,
+                i as usize + 1
+            ));
+        });
+            
+        
 
-        let ret = SEQS_HASH.lock().unwrap();
+    println!("Main dedup operation done, returning strings...");
 
-        ret
-            .par_iter()
-            .for_each(|(_, v)| {
-                let mut this_index = INDEX.lock().unwrap();
-                let mut vec_ret = RET_STR.lock().unwrap();
-
-                let mut vec_ret_mut = vec_ret.deref_mut();
-
-                *this_index += 1;
-
-                let seq_header = add_header(
-                    String::from_utf8(v.to_vec()).unwrap(),
-                    *this_index
-                );
-                
-                vec_ret_mut.push(seq_header);
-            });
-
-
-        RET_STR.lock().unwrap().to_vec()
-
+    vec_ret
 }
 
 #[pymodule]

@@ -13,3 +13,5 @@ pyo3 = { version = "0.17.1", features = ["extension-module"] }
 fasthash = "*"
 rayon = "1.5"
 lazy_static = "*"
+hashbrown = { version = "0.12.3", features = ["rayon"]}
+bio = "1.0.0"

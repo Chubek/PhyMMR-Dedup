@@ -1,7 +1,7 @@
 from phymmr_dedup import dedup_lines
 from time import time
 
-with open("test2.fa", "r") as fr:
+with open("SRR6824218.fa", "r") as fr:
     lines = fr.readlines()
 
     len_lines = len(lines)
@@ -20,7 +20,7 @@ t2 = time()
 
 
 
-print(f"test2.fa: There are {headers} headers. There are {len(lines)} lines. In {t2 - t1} returned {len(dep)} lines.")
+print(f"SRR6824218.fa: There are {headers} headers. There are {len(lines)} lines. In {t2 - t1} returned {len(dep)} lines.")
 
 
 
