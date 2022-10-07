@@ -15,23 +15,24 @@
 extern crate lazy_static;
 
 use fasthash::metro;
-use itertools::{Combinations, Itertools};
 use pyo3::prelude::*;
+use rayon::prelude::*;
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 lazy_static! {
-    static ref COMPS: HashMap<char, char> = {
-        let mut comps = HashMap::<char, char>::new();
+    static ref SEQS_HASH: Arc<Mutex<HashMap<u64, Vec<u8>>>> = {
+        let hashmap = HashMap::<u64, Vec<u8>>::new();
 
-        comps.insert('A', 'T');
-        comps.insert('C', 'G');
-        comps.insert('G', 'C');
-        comps.insert('T', 'A');
-
-        comps
+        Arc::new(Mutex::new(hashmap))
     };
+    static ref RET_STR: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::<String>::new()));
+    static ref INDEX: Arc<Mutex<usize>> = Arc::new(Mutex::new(0usize));
 }
 
+// these functions are string distancde and the old revcom
+
+/*
 #[derive(Clone)]
 struct SiftTrans {
     pub c_a: isize,
@@ -40,6 +41,7 @@ struct SiftTrans {
 }
 
 fn sift_four_common(a: &String, b: &String, max_offset: isize, max_distance: Option<f32>) -> f32 {
+
     if a.len() == 0 {
         if b.len() == 0 {
             return 0f32;
@@ -62,11 +64,7 @@ fn sift_four_common(a: &String, b: &String, max_offset: isize, max_distance: Opt
 
     let mut offset_vec: Vec<SiftTrans> = vec![];
 
-    loop {
-        if c_a >= len_a && c_b >= len_b {
-            break;
-        }
-
+    while (c_a < len_a) && (c_b < len_b) {
         let char_a = a.chars().nth(c_a as usize).unwrap() as u8;
         let char_b = b.chars().nth(c_b as usize).unwrap() as u8;
 
@@ -167,7 +165,8 @@ fn sift_four_common(a: &String, b: &String, max_offset: isize, max_distance: Opt
     ret.round()
 }
 
-fn reverse_complement(line: String) -> String {
+
+fn reverse_complement(line: &String) -> String {
     String::from_iter(
         line.chars()
             .map(|ch| {
@@ -181,6 +180,21 @@ fn reverse_complement(line: String) -> String {
             })
             .collect::<Vec<char>>(),
     )
+}
+*/
+
+fn reverse_complement(line: &mut [u8]) {
+    line.reverse();
+
+    for i in 0..line.len() {
+        match line[i] {
+            65 => line[i] = 84,
+            84 => line[i] = 65,
+            67 => line[i] = 71,
+            71 => line[i] = 67,
+            _ => (),
+        }
+    }
 }
 
 fn n_trim(parent_seq: String, min_seq_length: usize) -> Vec<String> {
@@ -222,67 +236,43 @@ fn n_trim(parent_seq: String, min_seq_length: usize) -> Vec<String> {
     }
 }
 
-fn add_header(seq: String, i: &mut usize) -> String {
-    *i += 1;
+fn add_header(seq: String, i: usize) -> String {
     format!(">NODE_{}_length_{}\n{}\n", i, seq.len(), seq)
 }
 
 #[pyfunction]
 fn dedup_lines(lines: Vec<String>, min_seq_length: usize, dist_thresh: f32) -> Vec<String> {
-    let mut this_index = 0usize; //starts from zero but at first 1 is added
-    
-    lines
-        .into_iter()
-        .map(|x| x.trim().to_string())
-        .filter(|x| x.chars().next() != Some('>'))
-        .combinations(2)
-        .map(|v| {
-            let (a, b) = (v.get(0).unwrap(), v.get(1).unwrap());
+    (0..lines.len())
+        .step_by(2)
+        .collect::<Vec<usize>>()
+        .par_iter()
+        .map(|x| lines[x + 1].trim().as_bytes().to_vec())
+        .map(|x| {
+            let mut ret = SEQS_HASH.lock().unwrap();
 
-            let a_n_trim = n_trim(a.clone(), min_seq_length);
-            let b_n_trim = n_trim(b.clone(), min_seq_length);
+            let a_hash = metro::hash64(&x);
+            ret.insert(a_hash, x.clone());
 
-            let mut ret = vec![];
+            let mut a_comp = x.clone();
+            reverse_complement(&mut a_comp);
+            let a_comp_hash = metro::hash64(&a_comp);
+            ret.insert(a_comp_hash, a_comp);
+        });
 
-            for ant in a_n_trim.iter() {
-                for bnt in b_n_trim.iter() {
-                    let dist = sift_four_common(ant, bnt, 1, None);
+    let ret = SEQS_HASH.lock().unwrap();
 
-                    let comp_a = reverse_complement(ant.clone());
-                    let comp_b = reverse_complement(bnt.clone());
+    ret.par_iter().for_each(|(_, v)| {
+        let mut this_index = INDEX.lock().unwrap();
+        let mut vec_ret = RET_STR.lock().unwrap();
 
-                    let dist_comp = sift_four_common(&comp_a, &comp_b, 1, None);
+        *this_index += 1;
 
-                    ret.push((a.clone(), b.clone(), comp_a, comp_b,  dist, dist_comp));
-                }
-            }
+        let seq_header = add_header(String::from_utf8(v.to_vec()).unwrap(), *this_index);
 
-            ret
-        })
-        .flatten()
-        .filter(|(_, _, _, _, dist, dist_comp)| *dist < dist_thresh && *dist_comp < dist_thresh)
-        .map(|(a, b, a_comp, b_comp, _, _)| {
-            let a_clone = a.clone();
-            let b_clone = b.clone();
+        vec_ret.push(seq_header);
+    });
 
-
-            let a_hash = metro::hash64(a_clone);
-            let b_hash = metro::hash64(b_clone);
-            let a_comp_hash = metro::hash64(a_comp);
-            let b_comp_hash = metro::hash64(b_comp);
-
-
-            (a, b, a_hash, b_hash, a_comp_hash, b_comp_hash)
-        })
-        .filter(|(_, _, a_hash, b_hash, a_comp_hash, b_comp_hash)| *a_hash != *b_hash 
-                                                                        && a_hash != a_comp_hash
-                                                                        && b_hash != b_comp_hash)
-        .map(|(a, b, _, _, _, _)| vec![
-            add_header(a, &mut this_index), 
-            add_header(b, &mut this_index)
-            ])
-        .flatten()
-        .collect::<Vec<String>>()
+    RET_STR.lock().unwrap().to_vec()
 }
 
 #[pymodule]
@@ -291,6 +281,7 @@ fn phymmr_dedup(_py: Python, m: &PyModule) -> PyResult<()> {
     Ok(())
 }
 
+/*
 #[test]
 fn test_stif_four() {
     let a = "hell1".to_string();
@@ -302,3 +293,4 @@ fn test_stif_four() {
 
     assert_eq!(dist, 2f32);
 }
+*/

@@ -10,6 +10,6 @@ crate-type = ["cdylib"]
 
 [dependencies]
 pyo3 = { version = "0.17.1", features = ["extension-module"] }
-lazy_static = "*"
 fasthash = "*"
-itertools = "*"
+rayon = "1.5"
+lazy_static = "*"
