@@ -1,7 +1,7 @@
 from phymmr_dedup import dedup_lines
 from time import time
 
-with open("test_file.fa", "r") as fr:
+with open("test2.fa", "r") as fr:
     lines = fr.readlines()
 
     len_lines = len(lines)

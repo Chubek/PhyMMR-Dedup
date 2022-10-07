@@ -16,8 +16,8 @@ extern crate lazy_static;
 
 use fasthash::metro;
 use pyo3::prelude::*;
+use std::{collections::HashMap, ops::DerefMut};
 use rayon::prelude::*;
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 lazy_static! {
@@ -26,13 +26,16 @@ lazy_static! {
 
         Arc::new(Mutex::new(hashmap))
     };
+
     static ref RET_STR: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::<String>::new()));
+
     static ref INDEX: Arc<Mutex<usize>> = Arc::new(Mutex::new(0usize));
 }
 
+
 // these functions are string distancde and the old revcom
 
-/*
+/* 
 #[derive(Clone)]
 struct SiftTrans {
     pub c_a: isize,
@@ -41,7 +44,7 @@ struct SiftTrans {
 }
 
 fn sift_four_common(a: &String, b: &String, max_offset: isize, max_distance: Option<f32>) -> f32 {
-
+ 
     if a.len() == 0 {
         if b.len() == 0 {
             return 0f32;
@@ -64,7 +67,7 @@ fn sift_four_common(a: &String, b: &String, max_offset: isize, max_distance: Opt
 
     let mut offset_vec: Vec<SiftTrans> = vec![];
 
-    while (c_a < len_a) && (c_b < len_b) {
+    while (c_a < len_a) && (c_b < len_b) {     
         let char_a = a.chars().nth(c_a as usize).unwrap() as u8;
         let char_b = b.chars().nth(c_b as usize).unwrap() as u8;
 
@@ -246,33 +249,46 @@ fn dedup_lines(lines: Vec<String>, min_seq_length: usize, dist_thresh: f32) -> V
         .step_by(2)
         .collect::<Vec<usize>>()
         .par_iter()
-        .map(|x| lines[x + 1].trim().as_bytes().to_vec())
-        .map(|x| {
+        .map(|x| 
+            lines[x + 1].trim().as_bytes().to_vec()
+        )
+        .for_each(|x| {
             let mut ret = SEQS_HASH.lock().unwrap();
+            let mut ret_mut = ret.deref_mut();
 
             let a_hash = metro::hash64(&x);
-            ret.insert(a_hash, x.clone());
+            ret_mut.insert(a_hash, x.clone());
 
             let mut a_comp = x.clone();
             reverse_complement(&mut a_comp);
             let a_comp_hash = metro::hash64(&a_comp);
-            ret.insert(a_comp_hash, a_comp);
+            ret_mut.insert(a_comp_hash, a_comp);
+
         });
 
-    let ret = SEQS_HASH.lock().unwrap();
+        let ret = SEQS_HASH.lock().unwrap();
 
-    ret.par_iter().for_each(|(_, v)| {
-        let mut this_index = INDEX.lock().unwrap();
-        let mut vec_ret = RET_STR.lock().unwrap();
+        ret
+            .par_iter()
+            .for_each(|(_, v)| {
+                let mut this_index = INDEX.lock().unwrap();
+                let mut vec_ret = RET_STR.lock().unwrap();
 
-        *this_index += 1;
+                let mut vec_ret_mut = vec_ret.deref_mut();
 
-        let seq_header = add_header(String::from_utf8(v.to_vec()).unwrap(), *this_index);
+                *this_index += 1;
 
-        vec_ret.push(seq_header);
-    });
+                let seq_header = add_header(
+                    String::from_utf8(v.to_vec()).unwrap(),
+                    *this_index
+                );
+                
+                vec_ret_mut.push(seq_header);
+            });
 
-    RET_STR.lock().unwrap().to_vec()
+
+        RET_STR.lock().unwrap().to_vec()
+
 }
 
 #[pymodule]
@@ -280,6 +296,7 @@ fn phymmr_dedup(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(dedup_lines, m)?)?;
     Ok(())
 }
+
 
 /*
 #[test]
