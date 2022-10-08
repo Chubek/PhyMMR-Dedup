@@ -13,5 +13,9 @@ pyo3 = { version = "0.17.1", features = ["extension-module"] }
 fasthash = "*"
 rayon = "1.5"
 lazy_static = "*"
-hashbrown = { version = "0.12.3", features = ["rayon"]}
 bio = "1.0.0"
+crossbeam-channel = "0.5"
+waker-fn = "1.1.0"
+threadpool = "1.8.1"
+hashbrown = { version = "0.11.2", features = ["rayon"] }
+parking_lot = "0.12.1"

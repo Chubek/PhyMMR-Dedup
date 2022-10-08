@@ -15,21 +15,20 @@
 extern crate lazy_static;
 
 use fasthash::metro;
+use lazy_static::__Deref;
 use pyo3::prelude::*;
-use hashbrown::HashMap;
+use hashbrown::HashSet;
 use rayon::prelude::*;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use parking_lot::Mutex;
 use std::ops::DerefMut;
 use bio::alphabets::rna::revcomp;
-
-lazy_static! {
-    static ref SEQS_HASH: Arc<Mutex<HashMap<u64, String>>> = {
-        let hashmap = HashMap::<u64, String>::new();
-
-        Arc::new(Mutex::new(hashmap))
-    };
-}
-
+use std::fs::read_to_string;
+use std::time::{SystemTime, Duration};
+use std::thread;
+use crossbeam_channel::{Sender, unbounded};
+use waker_fn::waker_fn;
+use threadpool::ThreadPool;
 
 // these functions are string distancde and the old revcom
 
@@ -182,7 +181,7 @@ fn reverse_complement(line: &String) -> String {
             .collect::<Vec<char>>(),
     )
 }
-*/
+
 
 fn reverse_complement(line: &mut String) {
     *line = line.replace("A", "T");
@@ -231,53 +230,133 @@ fn n_trim(parent_seq: String, min_seq_length: usize) -> Vec<String> {
     }
 }
 
+
+
+fn add_header(seq: String, i: &mut usize) -> String {
+    *i += 1;
+
+    format!(">NODE_{}_length_{}\n{}\n", i, seq.len(), seq)
+}
+
+fn add_revcomp_to_hashset(v: Vec<u8>, sender: Sender<Vec<u8>>) {                        
+    
+        
+}
+
+#[pyfunction]
+fn dedup_lines(lines: Vec<String>, min_seq_length: usize) -> Vec<String> {
+    let mut hs = DashSet::<Vec<u8>>::new();
+    let mut ret = vec![];
+    let (s, r) = unbounded();
+
+    (0..lines.len())
+        .step_by(2)
+        .collect::<Vec<usize>>()
+        .into_iter()
+        .map(|i| lines.get(i + 1).unwrap().as_bytes().to_vec())
+        .for_each(|v|  {
+            let ss = s.clone();
+            let a_comp = v.clone();
+
+            thread::spawn(move || {
+                ss.send(a_comp.clone());
+                let rvcmp = revcomp(a_comp);
+                ss.send(rvcmp);
+            });            
+        });
+
+    
+    match r.recv() {
+        Ok(vv) => {
+            hs.insert(vv);
+        },
+        Err(e) => panic!("{}", e),
+    }
+    
+    
+    let (ss, rs) = unbounded();
+     
+    hs
+        .into_iter()
+        .enumerate()
+        .for_each(|(i, v)| {
+            let ssc = ss.clone();
+
+            thread::spawn(move || {
+                let st = String::from_utf8(v).unwrap();
+
+                ssc.send(st);
+            });            
+        });
+
+    let mut index = 0usize;
+    
+    match rs.recv() {
+        Ok(s) => add_header(
+            s,
+            &mut index,
+        ),
+        Err(e) => panic!("{}", e),
+    };
+            
+    
+
+    println!("Main dedup operation done, returning strings...");
+
+    ret
+}
+
+
+*/
+
 fn add_header(seq: String, i: usize) -> String {
     format!(">NODE_{}_length_{}\n{}\n", i, seq.len(), seq)
 }
 
-
-
 #[pyfunction]
-fn dedup_lines(lines: Vec<String>, min_seq_length: usize, dist_thresh: f32) -> Vec<String> {
-    let mut vec_ret: Vec<String> = vec![];
+fn dedup_lines(lines: Vec<String>, min_seq_length: usize) -> Vec<String> {
+    let mut hashset = HashSet::<String>::new();
+    let len_vec = (0..lines.len()).step_by(2).into_iter().collect::<Vec<usize>>();
 
-    lines
-        .into_par_iter()
-        .enumerate()
-        .filter(|(i, _)| i % 2 == 0)
-        .for_each(|(_, v)| {
-            let mut hmm = SEQS_HASH.lock().unwrap();
-            let mut hm = hmm.deref_mut();
+    let n_workers = 16;
+    let pool = ThreadPool::new(n_workers);
 
-            let a_hash = metro::hash64(&v);
-            hm.insert(a_hash, v.clone());
+    let am_hs = Arc::new(Mutex::new(hashset));
 
-            let mut a_comp = v.clone().as_bytes().to_vec();
-            a_comp = revcomp(a_comp);
-            let a_comp_str = String::from_utf8(a_comp).unwrap();
-            let a_comp_hash = metro::hash64(&a_comp_str);
-            hm.insert(a_comp_hash, a_comp_str);
-        });
-    
-    
-    let ret = SEQS_HASH.lock().unwrap().clone();
-   
-    ret
-        .into_iter()
-        .enumerate()
-        .for_each(|(_, (i, v))| {
-            vec_ret.push(add_header(
-                v,
-                i as usize + 1
-            ));
-        });
+    for i in len_vec {
+        let s = lines.get(i + 1).unwrap().clone();
+        let s_am = Arc::new(Mutex::new(s)); 
+        let hs_am = Arc::clone(&am_hs);
+
+        pool.execute(move || {
+            let s_mutex_gaurd = s_am.lock();
+            let ss = s_mutex_gaurd.deref();
+
+            let mut hs_lock = hs_am.lock();
+            let mut hs_deref = hs_lock.deref_mut();
             
-        
+            hs_deref.insert(ss.clone());
+            
+            let rcomp = revcomp(ss.clone().as_bytes().to_vec());
+            let rcomp_str = String::from_utf8(rcomp).unwrap();
+            hs_deref.insert(rcomp_str);
+        })
+    }
 
-    println!("Main dedup operation done, returning strings...");
+    println!("Main job done.");
 
-    vec_ret
+    let mut hs_mg = am_hs.lock();
+    let hs_deref = hs_mg.deref();
+
+    let ret = hs_deref
+        .into_par_iter()   
+        .map(|s| s.clone())
+        .collect::<Vec<String>>();
+
+    ret
 }
+
+
 
 #[pymodule]
 fn phymmr_dedup(_py: Python, m: &PyModule) -> PyResult<()> {
@@ -286,16 +365,14 @@ fn phymmr_dedup(_py: Python, m: &PyModule) -> PyResult<()> {
 }
 
 
-/*
+
 #[test]
 fn test_stif_four() {
-    let a = "hell1".to_string();
-    let b = "jell2".to_string();
-    let max_offset = 1isize;
-    let max_distance = None;
+    let str = read_to_string("SRR6824218.fa").unwrap();
+    let lines = str.lines().into_iter().map(|x| x.to_string()).collect::<Vec<String>>();
 
-    let dist = sift_four_common(&a, &b, max_offset, max_distance);
-
-    assert_eq!(dist, 2f32);
-}
-*/
+    println!("Starting main op");
+    let t = SystemTime::now();
+    dedup_lines(lines, 90);
+    assert_eq!(Duration::from_secs(1), t.elapsed().unwrap());
+}   

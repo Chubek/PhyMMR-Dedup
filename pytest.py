@@ -14,7 +14,7 @@ print("File loaded. Counted headers.")
 
 t1 = time()
 
-dep = dedup_lines(lines, 90, 20)
+dep = dedup_lines(lines, 90)
 
 t2 = time()
 
